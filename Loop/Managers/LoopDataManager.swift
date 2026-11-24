@@ -1910,7 +1910,7 @@ extension LoopDataManager {
         updateGroup.enter()
         var delegateError: LoopError?
 
-        delegate?.loopDataManager(self, didRecommend: recommendedDose) { (error) in
+        delegate?.loopDataManager(self, didRecommend: sportVerlaengert(recommendedDose)) { (error) in
             delegateError = error
             updateGroup.leave()
         }
@@ -1921,6 +1921,47 @@ extension LoopDataManager {
         }
         
         return delegateError
+    }
+
+    // MARK: - Eigene Anpassung: Sport-Override mit laengerer Temp-Basalrate
+    // Waehrend eines Overrides ohne erhoehten Insulinbedarf (z. B. Sport) wird die
+    // temporaere Basalrate laenger als 30 min an den Pod geschickt, damit sie bei
+    // fehlender Handyverbindung weiterlaeuft. Nur Raten bis zur normalen
+    // Profil-Basalrate, also nie mehr als das, worauf der Pod sonst zurueckfaellt.
+    private func sportVerlaengert(_ dose: (recommendation: AutomaticDoseRecommendation, date: Date)) -> (recommendation: AutomaticDoseRecommendation, date: Date) {
+        let maxDauer = TimeInterval(hours: 2)         // Raten ab der Haelfte der Profilrate
+        let maxDauerNiedrig = TimeInterval(hours: 1)  // Raten darunter, auch 0 IE/h
+        let niedrigGrenze = 0.5                       // Anteil der Profil-Basalrate
+
+        let jetzt = now()
+
+        guard let temp = dose.recommendation.basalAdjustment,
+              temp.duration > 0,                                         // Abbruch-Befehl nie verlaengern
+              temp.duration <= TimeInterval(minutes: 30),
+              let override = settings.scheduleOverride,
+              override.isActive(at: jetzt),
+              (override.settings.insulinNeedsScaleFactor ?? 1.0) <= 1.0, // 120-%-Override bleibt bei 30 min
+              let profilRate = settings.basalRateSchedule?.value(at: jetzt),
+              temp.unitsPerHour <= profilRate + 0.001                    // nie ueber Profil-Basalrate
+        else {
+            return dose
+        }
+
+        let grenze = temp.unitsPerHour < profilRate * niedrigGrenze ? maxDauerNiedrig : maxDauer
+        let restOverride = override.scheduledEndDate.timeIntervalSince(jetzt)
+        let dauer = max(temp.duration, min(grenze, restOverride))
+
+        guard dauer > temp.duration else {
+            return dose
+        }
+
+        logger.default("Sport-Override: Temp-Basal verlaengert: %{public}@", String(format: "%.2f IE/h fuer %.0f min", temp.unitsPerHour, dauer.minutes))
+
+        let verlaengert = AutomaticDoseRecommendation(
+            basalAdjustment: TempBasalRecommendation(unitsPerHour: temp.unitsPerHour, duration: dauer),
+            bolusUnits: dose.recommendation.bolusUnits
+        )
+        return (recommendation: verlaengert, date: dose.date)
     }
     
     /// Ensures that the current temp basal is at or below the proposed max temp basal, and if not, cancel it before proceeding.
