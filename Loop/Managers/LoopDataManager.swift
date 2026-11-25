@@ -1929,7 +1929,7 @@ extension LoopDataManager {
     // fehlender Handyverbindung weiterlaeuft. Nur Raten bis zur normalen
     // Profil-Basalrate, also nie mehr als das, worauf der Pod sonst zurueckfaellt.
     private func sportVerlaengert(_ dose: (recommendation: AutomaticDoseRecommendation, date: Date)) -> (recommendation: AutomaticDoseRecommendation, date: Date) {
-        let maxDauer = TimeInterval(hours: 2)         // Raten ab der Haelfte der Profilrate
+        let maxDauer = TimeInterval(hours: 3)         // Raten ab der Haelfte der Profilrate
         let maxDauerNiedrig = TimeInterval(hours: 1)  // Raten darunter, auch 0 IE/h
         let niedrigGrenze = 0.5                       // Anteil der Profil-Basalrate
 
@@ -1947,9 +1947,9 @@ extension LoopDataManager {
             return dose
         }
 
-        let grenze = temp.unitsPerHour < profilRate * niedrigGrenze ? maxDauerNiedrig : maxDauer
+        let grenze = temp.unitsPerHour < profilRate * (override.settings.insulinNeedsScaleFactor ?? 1.0) * niedrigGrenze ? maxDauerNiedrig : maxDauer
         let restOverride = override.scheduledEndDate.timeIntervalSince(jetzt)
-        let dauer = max(temp.duration, min(grenze, restOverride))
+        let dauer = max(temp.duration, (min(grenze, restOverride) / 1800).rounded(.down) * 1800)
 
         guard dauer > temp.duration else {
             return dose
